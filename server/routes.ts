@@ -1,8 +1,10 @@
 import type { Express } from "express";
 import { createServer, type Server } from "node:http";
 import { answerKeys } from "./answers";
+import pool from "./db";
 
-const PREMIUM_DURATION_DAYS = 30;
+const PREMIUM_LESSON_IDS = new Set([6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+const BCU_LESSON_IDS = new Set([101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112]);
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const stripeKey = process.env.STRIPE_PUBLISHABLE_KEY;
@@ -10,7 +12,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     console.warn("STRIPE_PUBLISHABLE_KEY not set — checkout pages will not function");
   }
 
-  app.post("/api/grade-quiz", (req, res) => {
+  app.post("/api/grade-quiz", async (req, res) => {
+    const userId = (req.session as any)?.userId;
+    if (!userId) {
+      return res.status(401).json({ message: "Login required" });
+    }
+
     const { lessonId, answers } = req.body as {
       lessonId: number;
       answers: string[];
@@ -29,9 +36,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(400).json({ message: "Invalid request body" });
     }
 
+    if (PREMIUM_LESSON_IDS.has(lessonId) || BCU_LESSON_IDS.has(lessonId)) {
+      try {
+        const userResult = await pool.query(
+          "SELECT is_premium, has_university FROM users WHERE id = $1",
+          [userId]
+        );
+        if (userResult.rows.length === 0) {
+          return res.status(401).json({ message: "User not found" });
+        }
+        const user = userResult.rows[0];
+
+        if (PREMIUM_LESSON_IDS.has(lessonId) && !user.is_premium) {
+          return res.status(403).json({ message: "Premium subscription required" });
+        }
+        if (BCU_LESSON_IDS.has(lessonId) && !user.has_university) {
+          return res.status(403).json({ message: "University access required" });
+        }
+      } catch (err) {
+        console.error("Entitlement check error:", err);
+        return res.status(500).json({ message: "Server error" });
+      }
+    }
+
     const key = answerKeys[lessonId];
     if (!key) {
       return res.status(404).json({ message: "Answer key not found for this lesson" });
+    }
+
+    if (answers.length !== key.length) {
+      return res.status(400).json({ message: `Expected ${key.length} answers, received ${answers.length}` });
     }
 
     const correct = answers.map((ans, i) => {
@@ -49,85 +83,167 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return res.json({ score, passed, correct, xpEarned });
   });
 
-  app.post("/api/activate", (req, res) => {
-    const { key, product } = req.body as { key: string; product: string };
-
-    if (
-      !key ||
-      !product ||
-      typeof key !== "string" ||
-      typeof product !== "string" ||
-      key.length > 200 ||
-      !["repair", "letters"].includes(product)
-    ) {
-      return res.status(400).json({ valid: false, message: "Invalid request" });
-    }
-
-    const trimmedKey = key.trim();
-
-    if (product === "repair") {
-      const repairKey = process.env.REPAIR_ACTIVATION_KEY;
-      if (!repairKey) {
-        return res.status(500).json({ valid: false, message: "Activation system not configured" });
-      }
-      if (trimmedKey === repairKey) {
-        const expiresAt = new Date(Date.now() + PREMIUM_DURATION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-        return res.json({ valid: true, product: "repair", expiresAt, durationDays: PREMIUM_DURATION_DAYS });
-      }
-      return res.status(401).json({ valid: false, message: "Invalid activation key" });
-    }
-
-    if (product === "letters") {
-      const lettersKey = process.env.LETTERS_ACTIVATION_KEY;
-      if (!lettersKey) {
-        return res.status(500).json({ valid: false, message: "Activation system not configured" });
-      }
-      if (trimmedKey === lettersKey) {
-        return res.json({ valid: true, product: "letters" });
-      }
-      return res.status(401).json({ valid: false, message: "Invalid activation key" });
-    }
-
-    return res.status(400).json({ valid: false, message: "Unknown product" });
+  app.get("/repair-checkout", (_req, res) => {
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sireen Repair Mode — Checkout</title>
+  <style>${checkoutPageStyles}</style>
+</head>
+<body>
+  <h1>SIREEN REPAIR MODE</h1>
+  <p class="subtitle">Unlock All 18 Missions &amp; Full Credit Repair System</p>
+  <script async src="https://js.stripe.com/v3/buy-button.js"></script>
+  <stripe-buy-button
+    buy-button-id="buy_btn_1T8W1d43frjv7jhdxZLMhEBc"
+    publishable-key="${stripeKey}"
+  ></stripe-buy-button>
+  <p class="secure">Secure checkout powered by Stripe</p>
+</body>
+</html>`);
   });
 
-  app.post("/api/verify-premium", (req, res) => {
-    const { key, product } = req.body as { key: string; product: string };
-
-    if (
-      !key ||
-      !product ||
-      typeof key !== "string" ||
-      typeof product !== "string" ||
-      key.length > 200 ||
-      !["repair", "letters"].includes(product)
-    ) {
-      return res.status(400).json({ active: false, message: "Invalid request" });
-    }
-
-    const trimmedKey = key.trim();
-
-    if (product === "repair") {
-      const repairKey = process.env.REPAIR_ACTIVATION_KEY;
-      if (repairKey && trimmedKey === repairKey) {
-        const expiresAt = new Date(Date.now() + PREMIUM_DURATION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-        return res.json({ active: true, product: "repair", expiresAt, durationDays: PREMIUM_DURATION_DAYS });
-      }
-      return res.json({ active: false, product: "repair", message: "Key no longer valid or subscription expired" });
-    }
-
-    if (product === "letters") {
-      const lettersKey = process.env.LETTERS_ACTIVATION_KEY;
-      if (lettersKey && trimmedKey === lettersKey) {
-        return res.json({ active: true, product: "letters" });
-      }
-      return res.json({ active: false, product: "letters", message: "Key no longer valid" });
-    }
-
-    return res.json({ active: false, message: "Unknown product" });
+  app.get("/letters-checkout", (_req, res) => {
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sireen Dispute Packet — Checkout</title>
+  <style>${checkoutPageStyles}</style>
+</head>
+<body>
+  <h1>SIREEN DISPUTE PACKET</h1>
+  <p class="subtitle">15 Professional Dispute Letter Templates</p>
+  <div class="checkout-price">$50.00</div>
+  <script async src="https://js.stripe.com/v3/buy-button.js"></script>
+  <stripe-buy-button
+    buy-button-id="buy_btn_1T8Vx943frjv7jhdhEHUvKij"
+    publishable-key="${stripeKey}"
+  ></stripe-buy-button>
+  <p class="secure">Secure checkout powered by Stripe</p>
+</body>
+</html>`);
   });
 
-  const successPageStyles = `
+  async function verifyStripeSession(req: any, res: any): Promise<any | null> {
+    const sessionId = req.query.session_id as string;
+    if (!sessionId || typeof sessionId !== "string") {
+      res.status(403).send(accessDeniedPage("Invalid or missing payment session."));
+      return null;
+    }
+
+    const stripe = await getStripeForVerification();
+    if (!stripe) {
+      res.status(503).send(accessDeniedPage("Payment verification unavailable."));
+      return null;
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.payment_status !== "paid") {
+      res.status(403).send(accessDeniedPage("Payment not completed."));
+      return null;
+    }
+
+    const userId = (req.session as any)?.userId;
+    if (userId && session.metadata?.userId && String(userId) !== String(session.metadata.userId)) {
+      res.status(403).send(accessDeniedPage("This payment belongs to a different account."));
+      return null;
+    }
+
+    return session;
+  }
+
+  app.get("/success/repair", async (req, res) => {
+    try {
+      const session = await verifyStripeSession(req, res);
+      if (!session) return;
+
+      res.send(successPage(
+        "PURCHASE COMPLETE",
+        "Thank you for purchasing Sireen Repair Mode!<br>Your account has been activated automatically. Open the app and all 18 missions will be unlocked.",
+        "repair"
+      ));
+    } catch (err) {
+      console.error("Success page verification error:", err);
+      return res.status(403).send(accessDeniedPage("Could not verify payment."));
+    }
+  });
+
+  app.get("/success/university", async (req, res) => {
+    try {
+      const session = await verifyStripeSession(req, res);
+      if (!session) return;
+
+      res.send(successPage(
+        "UNIVERSITY ACTIVATED",
+        "Welcome to Sireen Business Credit University!<br>Your account has been activated automatically. Open the app and all 12 BCU modules will be unlocked.",
+        "university"
+      ));
+    } catch (err) {
+      console.error("Success page verification error:", err);
+      return res.status(403).send(accessDeniedPage("Could not verify payment."));
+    }
+  });
+
+  app.get("/success/letters", async (req, res) => {
+    try {
+      const session = await verifyStripeSession(req, res);
+      if (!session) return;
+
+      res.send(successPage(
+        "PURCHASE COMPLETE",
+        "Thank you for purchasing the Sireen Dispute Packet!<br>Your account has been activated automatically. Open the app and all 15 letter templates will be unlocked.",
+        "letters"
+      ));
+    } catch (err) {
+      console.error("Success page verification error:", err);
+      return res.status(403).send(accessDeniedPage("Could not verify payment."));
+    }
+  });
+
+  const httpServer = createServer(app);
+  return httpServer;
+}
+
+async function getStripeForVerification() {
+  const Stripe = (await import("stripe")).default;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) return null;
+  return new Stripe(key, { apiVersion: "2025-04-30.basil" as any });
+}
+
+const checkoutPageStyles = `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0A0E1A;
+    color: #E2E8F0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px;
+    text-align: center;
+  }
+  h1 { font-size: 24px; color: #D4AF37; margin-bottom: 8px; letter-spacing: 1px; }
+  .subtitle { font-size: 15px; color: #94A3B8; margin-bottom: 32px; line-height: 1.5; }
+  .checkout-price { font-size: 32px; font-weight: 700; color: #D4AF37; margin-bottom: 24px; }
+  stripe-buy-button { margin-bottom: 20px; }
+  .secure { font-size: 11px; color: #64748B; margin-top: 12px; }
+`;
+
+function successPage(title: string, message: string, product: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} — Sireen</title>
+  <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       background: #0A0E1A;
@@ -143,40 +259,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     .success-icon { font-size: 64px; margin-bottom: 16px; }
     h1 { font-size: 24px; color: #D4AF37; margin-bottom: 8px; letter-spacing: 1px; }
-    .subtitle { font-size: 15px; color: #94A3B8; margin-bottom: 32px; line-height: 1.5; }
-    .key-label { font-size: 12px; color: #64748B; letter-spacing: 2px; margin-bottom: 8px; text-transform: uppercase; }
-    .key-box {
-      background: #111827;
-      border: 2px solid #D4AF37;
-      border-radius: 12px;
-      padding: 20px 32px;
-      margin-bottom: 12px;
-      min-width: 280px;
-    }
-    .key-value {
-      font-size: 22px;
-      font-weight: 700;
-      color: #D4AF37;
-      letter-spacing: 3px;
-      font-family: 'Courier New', Courier, monospace;
-      word-break: break-all;
-      user-select: all;
-    }
-    .copy-btn {
-      background: #D4AF37;
-      color: #000;
-      border: none;
-      border-radius: 8px;
-      padding: 12px 32px;
-      font-size: 14px;
-      font-weight: 700;
-      cursor: pointer;
-      margin-bottom: 24px;
-      letter-spacing: 1px;
-    }
-    .copy-btn:hover { background: #E5C04B; }
-    .copy-btn:active { transform: scale(0.97); }
-    .copied { background: #22C55E !important; }
+    .subtitle { font-size: 15px; color: #94A3B8; margin-bottom: 32px; line-height: 1.5; max-width: 400px; }
     .instructions {
       background: #111827;
       border-radius: 12px;
@@ -206,147 +289,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
       flex-shrink: 0;
     }
     .step-text { font-size: 13px; color: #94A3B8; line-height: 1.4; }
-    .price { font-size: 14px; color: #94A3B8; margin-bottom: 24px; }
-    .checkout-price { font-size: 32px; font-weight: 700; color: #D4AF37; margin-bottom: 24px; }
-    stripe-buy-button { margin-bottom: 20px; }
-    .secure { font-size: 11px; color: #64748B; margin-top: 12px; }
-  `;
-
-  const copyScript = `
-    function copyKey() {
-      const keyEl = document.getElementById('activation-key');
-      const btn = document.getElementById('copy-btn');
-      navigator.clipboard.writeText(keyEl.textContent.trim()).then(() => {
-        btn.textContent = 'COPIED!';
-        btn.classList.add('copied');
-        setTimeout(() => { btn.textContent = 'COPY KEY'; btn.classList.remove('copied'); }, 2000);
-      }).catch(() => {
-        const range = document.createRange();
-        range.selectNode(keyEl);
-        window.getSelection().removeAllRanges();
-        window.getSelection().addRange(range);
-      });
-    }
-  `;
-
-  app.get("/repair-checkout", (_req, res) => {
-    res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sireen Repair Mode — Checkout</title>
-  <style>${successPageStyles}</style>
-</head>
-<body>
-  <h1>SIREEN REPAIR MODE</h1>
-  <p class="subtitle">Unlock All 18 Missions &amp; Full Credit Repair System</p>
-  <script async src="https://js.stripe.com/v3/buy-button.js"></script>
-  <stripe-buy-button
-    buy-button-id="buy_btn_1T8W1d43frjv7jhdxZLMhEBc"
-    publishable-key="${stripeKey}"
-  ></stripe-buy-button>
-  <p class="secure">Secure checkout powered by Stripe</p>
-</body>
-</html>`);
-  });
-
-  app.get("/letters-checkout", (_req, res) => {
-    res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sireen Dispute Packet — Checkout</title>
-  <style>${successPageStyles}</style>
-</head>
-<body>
-  <h1>SIREEN DISPUTE PACKET</h1>
-  <p class="subtitle">15 Professional Dispute Letter Templates</p>
-  <div class="checkout-price">$50.00</div>
-  <script async src="https://js.stripe.com/v3/buy-button.js"></script>
-  <stripe-buy-button
-    buy-button-id="buy_btn_1T8Vx943frjv7jhdhEHUvKij"
-    publishable-key="${stripeKey}"
-  ></stripe-buy-button>
-  <p class="secure">Secure checkout powered by Stripe</p>
-</body>
-</html>`);
-  });
-
-  const escapeHtml = (str: string) =>
-    str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-
-  app.get("/success/repair", (_req, res) => {
-    const activationKey = process.env.REPAIR_ACTIVATION_KEY;
-    if (!activationKey) {
-      return res.status(503).send("Activation system is being configured. Please check back shortly.");
-    }
-    const safeKey = escapeHtml(activationKey);
-    res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Purchase Complete — Sireen Repair Mode</title>
-  <style>${successPageStyles}</style>
+  </style>
 </head>
 <body>
   <div class="success-icon">✅</div>
-  <h1>PURCHASE COMPLETE</h1>
-  <p class="subtitle">Thank you for purchasing Sireen Repair Mode!<br>Use the activation key below to unlock all 18 missions.</p>
-  <p class="key-label">Your Activation Key</p>
-  <div class="key-box">
-    <span class="key-value" id="activation-key">${safeKey}</span>
-  </div>
-  <button class="copy-btn" id="copy-btn" onclick="copyKey()">COPY KEY</button>
+  <h1>${title}</h1>
+  <p class="subtitle">${message}</p>
   <div class="instructions">
-    <h3>How to Activate</h3>
+    <h3>Next Steps</h3>
     <div class="step"><span class="step-num">1</span><span class="step-text">Open the Sireen app</span></div>
-    <div class="step"><span class="step-num">2</span><span class="step-text">Go to any locked lesson and tap "Upgrade"</span></div>
-    <div class="step"><span class="step-num">3</span><span class="step-text">Tap "Have an activation key?"</span></div>
-    <div class="step"><span class="step-num">4</span><span class="step-text">Paste your key and tap Activate</span></div>
+    <div class="step"><span class="step-num">2</span><span class="step-text">${product === "repair" ? "All 18 missions are now unlocked" : product === "university" ? "All 12 Business Credit University modules are now unlocked" : "Go to the Letters tab — all templates are available"}</span></div>
+    <div class="step"><span class="step-num">3</span><span class="step-text">If content doesn't appear unlocked, log out and log back in</span></div>
   </div>
-  <script>${copyScript}</script>
 </body>
-</html>`);
-  });
+</html>`;
+}
 
-  app.get("/success/letters", (_req, res) => {
-    const activationKey = process.env.LETTERS_ACTIVATION_KEY;
-    if (!activationKey) {
-      return res.status(503).send("Activation system is being configured. Please check back shortly.");
-    }
-    const safeKey = escapeHtml(activationKey);
-    res.send(`<!DOCTYPE html>
+function accessDeniedPage(reason: string): string {
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Purchase Complete — Sireen Dispute Packet</title>
-  <style>${successPageStyles}</style>
+  <title>Access Denied — Sireen</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0A0E1A;
+      color: #E2E8F0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+      text-align: center;
+    }
+    .icon { font-size: 64px; margin-bottom: 16px; }
+    h1 { font-size: 24px; color: #EF4444; margin-bottom: 8px; letter-spacing: 1px; }
+    .subtitle { font-size: 15px; color: #94A3B8; max-width: 400px; }
+  </style>
 </head>
 <body>
-  <div class="success-icon">✅</div>
-  <h1>PURCHASE COMPLETE</h1>
-  <p class="subtitle">Thank you for purchasing the Sireen Dispute Packet!<br>Use the activation key below to unlock all 15 letter templates.</p>
-  <p class="key-label">Your Activation Key</p>
-  <div class="key-box">
-    <span class="key-value" id="activation-key">${safeKey}</span>
-  </div>
-  <button class="copy-btn" id="copy-btn" onclick="copyKey()">COPY KEY</button>
-  <div class="instructions">
-    <h3>How to Activate</h3>
-    <div class="step"><span class="step-num">1</span><span class="step-text">Open the Sireen app</span></div>
-    <div class="step"><span class="step-num">2</span><span class="step-text">Go to the Letters tab</span></div>
-    <div class="step"><span class="step-num">3</span><span class="step-text">Tap "Have an activation key?"</span></div>
-    <div class="step"><span class="step-num">4</span><span class="step-text">Paste your key and tap Activate</span></div>
-  </div>
-  <script>${copyScript}</script>
+  <div class="icon">🚫</div>
+  <h1>ACCESS DENIED</h1>
+  <p class="subtitle">${reason}</p>
 </body>
-</html>`);
-  });
-
-  const httpServer = createServer(app);
-  return httpServer;
+</html>`;
 }
