@@ -53,10 +53,11 @@ SIREEN CREDIT GAME transforms credit education into a mission-based learning exp
 - `app/(tabs)/profile.tsx` — Profile, rank, badges, stats, logout
 
 ### Screens
-- `app/lesson/[id].tsx` — Lesson content screen (premium-gated for lessons 6-18 and BCU 101-112)
-- `app/quiz/[id].tsx` — Quiz checkpoint screen (shuffled options, premium-gated)
+- `app/lesson/[id].tsx` — Lesson content screen (premium-gated for lessons 6-18, university-gated for BCU 101-112)
+- `app/quiz/[id].tsx` — Quiz checkpoint screen (shuffled options, premium/university-gated)
 - `app/mission-complete.tsx` — Animated completion screen
-- `app/upgrade.tsx` — Repair Mode subscription modal ($9.99/month auto-pay)
+- `app/upgrade.tsx` — Repair Mode subscription modal ($14.99/month auto-pay)
+- `app/funding-score.tsx` — Funding Score Calculator (8-category business funding readiness assessment)
 
 ### Data Files
 - `data/lessons.ts` — All 18 credit repair lesson definitions (content + quiz questions, NO answers)
@@ -67,9 +68,12 @@ SIREEN CREDIT GAME transforms credit education into a mission-based learning exp
 
 ### User Authentication
 - Email/password registration and login
-- Server-side session management (connect-pg-simple)
+- Server-side session management (connect-pg-simple) with session regeneration on login/register
 - Premium status tracked in PostgreSQL users table
 - Auth state managed via AuthContext (wraps entire app)
+- Server-side entitlement checks on quiz grading (premium/BCU lessons require active subscription)
+- Rate limiting on auth, quiz, and subscribe endpoints
+- Success pages verify Stripe checkout session before displaying
 
 ### Free Tier (Bootcamp Mode)
 - 5 lessons: Welcome, 5 Credit Stats, Reading Reports, Negative Items, Credit Myths
@@ -84,11 +88,15 @@ SIREEN CREDIT GAME transforms credit education into a mission-based learning exp
 - **Server-side verification**: isPremium derived from user record in PostgreSQL
 - **Subscription lifecycle**: checkout.session.completed → invoice.payment_succeeded → invoice.payment_failed → customer.subscription.deleted
 
-### Business Credit University (separate payment — coming soon)
+### Business Credit University ($85.00/month auto-pay)
 - 12 modules (IDs 101-112) covering bureaus, vendors, scores, tiers, disputes, funding
-- Locked behind `hasUniversity` flag (DB column: `has_university`)
-- NOT included in Repair Mode subscription — separate future Stripe payment
-- Appears in main Missions screen after lesson 18, gated with "Coming Soon" card
+- Locked behind `hasUniversity` flag (DB columns: `has_university`, `bcu_subscription_id`, `bcu_expires_at`)
+- Separate Stripe subscription from Repair Mode — $85/month recurring
+- Upgrade screen at `app/upgrade-university.tsx` with teal-themed design
+- Stripe Buy Button ID: `buy_btn_1T9IUe43frjv7jhd9yLI8oSz`
+- Server-side checkout via `/api/subscribe/university` endpoint
+- Webhook handles BCU lifecycle: activation, renewal, failure, cancellation
+- Appears in main Missions screen after lesson 18 with BCU banner separator image
 - 10-level gamified progression system with badges (Startup → Enterprise)
 
 ### Dispute Letter Packet ($50 — one-time purchase)
@@ -100,6 +108,13 @@ SIREEN CREDIT GAME transforms credit education into a mission-based learning exp
 - Options are shuffled using seeded random per question
 - Server-side grading compares answer TEXT, not position
 - State fully resets when route `id` parameter changes
+
+### Funding Score Calculator
+- 8-category scoring system: Time in Business, Revenue, Bank Stability, Tradeline Depth, Credit Quality, Utilization/Debt, Public Records, Identity/Compliance
+- Max 100 points (15+15+15+12+15+12+8+8)
+- Approval odds tiers: 90-100 (85%-95%), 75-89 (70%-84%), 60-74 (50%-69%), 40-59 (25%-49%), 0-39 (5%-24%)
+- Accessible from Missions screen via gold card button
+- Includes animated results with per-category breakdown bars and tier legend
 
 ### Gamification
 - **Ranks**: Rookie → Builder → Strategist → Operator → Commander → Elite Restorer
