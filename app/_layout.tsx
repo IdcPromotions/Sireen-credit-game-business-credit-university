@@ -65,6 +65,14 @@ function RootLayoutNav() {
         name="upgrade"
         options={{ headerShown: false, presentation: "modal" }}
       />
+      <Stack.Screen
+        name="upgrade-university"
+        options={{ headerShown: false, presentation: "modal" }}
+      />
+      <Stack.Screen
+        name="funding-score"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
     </Stack>
   );
 }
