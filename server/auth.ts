@@ -38,18 +38,24 @@ router.post("/register", async (req, res) => {
 
     const user = result.rows[0];
 
-    (req.session as any).userId = user.id;
+    req.session.regenerate((err) => {
+      if (err) {
+        console.error("Session regeneration error:", err);
+        return res.status(500).json({ message: "Registration failed" });
+      }
+      (req.session as any).userId = user.id;
 
-    return res.status(201).json({
-      user: {
-        id: user.id,
-        email: user.email,
-        isPremium: user.is_premium,
-        premiumExpiresAt: user.premium_expires_at,
-        hasLetters: user.has_letters,
-        hasUniversity: user.has_university,
-        subscriptionStatus: user.subscription_status,
-      },
+      return res.status(201).json({
+        user: {
+          id: user.id,
+          email: user.email,
+          isPremium: user.is_premium,
+          premiumExpiresAt: user.premium_expires_at,
+          hasLetters: user.has_letters,
+          hasUniversity: user.has_university,
+          subscriptionStatus: user.subscription_status,
+        },
+      });
     });
   } catch (err) {
     console.error("Registration error:", err);
@@ -100,18 +106,24 @@ router.post("/login", async (req, res) => {
       }
     }
 
-    (req.session as any).userId = user.id;
+    req.session.regenerate((err) => {
+      if (err) {
+        console.error("Session regeneration error:", err);
+        return res.status(500).json({ message: "Login failed" });
+      }
+      (req.session as any).userId = user.id;
 
-    return res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        isPremium,
-        premiumExpiresAt: user.premium_expires_at,
-        hasLetters: user.has_letters,
-        hasUniversity: user.has_university,
-        subscriptionStatus: isPremium ? user.subscription_status : (user.subscription_status === 'expired' ? 'expired' : user.subscription_status),
-      },
+      return res.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          isPremium,
+          premiumExpiresAt: user.premium_expires_at,
+          hasLetters: user.has_letters,
+          hasUniversity: user.has_university,
+          subscriptionStatus: isPremium ? user.subscription_status : (user.subscription_status === 'expired' ? 'expired' : user.subscription_status),
+        },
+      });
     });
   } catch (err) {
     console.error("Login error:", err);
