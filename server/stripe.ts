@@ -138,6 +138,73 @@ router.post("/subscribe/letters", async (req, res) => {
   }
 });
 
+router.post("/subscribe/university", async (req, res) => {
+  const userId = (req.session as any)?.userId;
+  if (!userId) {
+    return res.status(401).json({ message: "Login required" });
+  }
+
+  const stripe = getStripe();
+  if (!stripe) {
+    return res.status(503).json({ message: "Payment system not configured" });
+  }
+
+  try {
+    const userResult = await pool.query("SELECT email, stripe_customer_id, has_university FROM users WHERE id = $1", [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const user = userResult.rows[0];
+    if (user.has_university) {
+      return res.status(400).json({ message: "University already active" });
+    }
+
+    let customerId = user.stripe_customer_id;
+
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: user.email,
+        metadata: { userId: String(userId) },
+      });
+      customerId = customer.id;
+      await pool.query("UPDATE users SET stripe_customer_id = $1 WHERE id = $2", [customerId, userId]);
+    }
+
+    const baseUrl = getBaseUrl(req);
+
+    const session = await stripe.checkout.sessions.create({
+      customer: customerId,
+      mode: "subscription",
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: "Sireen Business Credit University",
+              description: "Monthly access to all 12 BCU modules",
+            },
+            unit_amount: 8500,
+            recurring: { interval: "month" },
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: `${baseUrl}/success/university?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${baseUrl}/upgrade-university`,
+      metadata: { userId: String(userId), product: "university" },
+      subscription_data: {
+        metadata: { userId: String(userId), product: "university" },
+      },
+    });
+
+    return res.json({ url: session.url });
+  } catch (err) {
+    console.error("Stripe BCU checkout error:", err);
+    return res.status(500).json({ message: "Failed to create checkout session" });
+  }
+});
+
 router.get("/subscription/status", async (req, res) => {
   const userId = (req.session as any)?.userId;
   if (!userId) {
@@ -146,7 +213,7 @@ router.get("/subscription/status", async (req, res) => {
 
   try {
     const result = await pool.query(
-      "SELECT is_premium, premium_expires_at, has_letters, subscription_status, stripe_subscription_id FROM users WHERE id = $1",
+      "SELECT is_premium, premium_expires_at, has_letters, has_university, bcu_expires_at, bcu_subscription_id, subscription_status, stripe_subscription_id FROM users WHERE id = $1",
       [userId]
     );
 
@@ -167,12 +234,26 @@ router.get("/subscription/status", async (req, res) => {
       }
     }
 
+    let hasUniversity = user.has_university;
+    if (hasUniversity && user.bcu_expires_at) {
+      if (new Date(user.bcu_expires_at).getTime() < Date.now()) {
+        hasUniversity = false;
+        await pool.query(
+          "UPDATE users SET has_university = false WHERE id = $1",
+          [userId]
+        );
+      }
+    }
+
     return res.json({
       isPremium,
       premiumExpiresAt: user.premium_expires_at,
       hasLetters: user.has_letters,
+      hasUniversity,
+      bcuExpiresAt: user.bcu_expires_at,
       subscriptionStatus: user.subscription_status,
       hasSubscription: !!user.stripe_subscription_id,
+      hasBcuSubscription: !!user.bcu_subscription_id,
     });
   } catch (err) {
     console.error("Subscription status error:", err);
@@ -238,6 +319,21 @@ export function setupWebhookRoute(app: any) {
             );
             console.log(`Letters unlocked for user ${userId}`);
           }
+
+          if (product === "university" && session.subscription) {
+            let bcuExpiresAt: string;
+            try {
+              const sub = await stripe.subscriptions.retrieve(session.subscription as string);
+              bcuExpiresAt = new Date((sub as any).current_period_end * 1000).toISOString();
+            } catch {
+              bcuExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+            }
+            await pool.query(
+              `UPDATE users SET has_university = true, bcu_expires_at = $1, bcu_subscription_id = $2, updated_at = NOW() WHERE id = $3`,
+              [bcuExpiresAt, session.subscription, userId]
+            );
+            console.log(`University activated for user ${userId}`);
+          }
           break;
         }
 
@@ -253,11 +349,22 @@ export function setupWebhookRoute(app: any) {
             } catch {
               expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
             }
-            await pool.query(
-              `UPDATE users SET is_premium = true, premium_expires_at = $1, subscription_status = 'active', updated_at = NOW() WHERE stripe_subscription_id = $2`,
+
+            const repairResult = await pool.query(
+              `UPDATE users SET is_premium = true, premium_expires_at = $1, subscription_status = 'active', updated_at = NOW() WHERE stripe_subscription_id = $2 RETURNING id`,
               [expiresAt, subscriptionId]
             );
-            console.log(`Subscription renewed for subscription ${subscriptionId}`);
+            if (repairResult.rowCount && repairResult.rowCount > 0) {
+              console.log(`Repair subscription renewed for subscription ${subscriptionId}`);
+            }
+
+            const bcuResult = await pool.query(
+              `UPDATE users SET has_university = true, bcu_expires_at = $1, updated_at = NOW() WHERE bcu_subscription_id = $2 RETURNING id`,
+              [expiresAt, subscriptionId]
+            );
+            if (bcuResult.rowCount && bcuResult.rowCount > 0) {
+              console.log(`BCU subscription renewed for subscription ${subscriptionId}`);
+            }
           }
           break;
         }
@@ -271,6 +378,10 @@ export function setupWebhookRoute(app: any) {
               `UPDATE users SET is_premium = false, subscription_status = 'past_due', updated_at = NOW() WHERE stripe_subscription_id = $1`,
               [subscriptionId]
             );
+            await pool.query(
+              `UPDATE users SET has_university = false, updated_at = NOW() WHERE bcu_subscription_id = $1`,
+              [subscriptionId]
+            );
             console.log(`Payment failed for subscription ${subscriptionId}`);
           }
           break;
@@ -282,6 +393,10 @@ export function setupWebhookRoute(app: any) {
             `UPDATE users SET is_premium = false, subscription_status = 'canceled', stripe_subscription_id = NULL, updated_at = NOW() WHERE stripe_subscription_id = $1`,
             [subscription.id]
           );
+          await pool.query(
+            `UPDATE users SET has_university = false, bcu_subscription_id = NULL, updated_at = NOW() WHERE bcu_subscription_id = $1`,
+            [subscription.id]
+          );
           console.log(`Subscription canceled: ${subscription.id}`);
           break;
         }
@@ -289,16 +404,24 @@ export function setupWebhookRoute(app: any) {
         case "customer.subscription.updated": {
           const subscription = event.data.object as Stripe.Subscription;
           const status = subscription.status;
+          const periodEnd = new Date((subscription as any).current_period_end * 1000).toISOString();
 
           if (status === "active") {
-            const periodEnd = new Date((subscription as any).current_period_end * 1000).toISOString();
             await pool.query(
               `UPDATE users SET is_premium = true, premium_expires_at = $1, subscription_status = 'active', updated_at = NOW() WHERE stripe_subscription_id = $2`,
+              [periodEnd, subscription.id]
+            );
+            await pool.query(
+              `UPDATE users SET has_university = true, bcu_expires_at = $1, updated_at = NOW() WHERE bcu_subscription_id = $2`,
               [periodEnd, subscription.id]
             );
           } else if (status === "past_due" || status === "unpaid") {
             await pool.query(
               `UPDATE users SET is_premium = false, subscription_status = $1, updated_at = NOW() WHERE stripe_subscription_id = $2`,
+              [status, subscription.id]
+            );
+            await pool.query(
+              `UPDATE users SET has_university = false, updated_at = NOW() WHERE bcu_subscription_id = $2`,
               [status, subscription.id]
             );
           }
