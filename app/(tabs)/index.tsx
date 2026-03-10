@@ -19,6 +19,7 @@ import { BCU_LESSONS } from "@/data/bcu-lessons";
 import Colors from "@/constants/colors";
 
 const logoImage = require("@/assets/images/logo.png");
+const bcuBannerImage = require("@/assets/images/bcu-banner.png");
 
 const RANK_COLORS: Record<string, string> = {
   Rookie: "#78909C",
@@ -45,7 +46,7 @@ function MissionCard({ lesson, isLocked, isCompleted, score, lockType }: {
     if (isLocked && lockType === "premium") {
       router.push("/upgrade");
     } else if (isLocked && lockType === "university") {
-      return;
+      router.push("/upgrade-university");
     } else if (!isLocked) {
       router.push({ pathname: "/lesson/[id]", params: { id: lesson.id } });
     }
@@ -189,6 +190,30 @@ export default function MissionsScreen() {
           </View>
         </View>
 
+        {/* Funding Score Tool */}
+        <TouchableOpacity
+          style={styles.fundingScoreCard}
+          onPress={() => router.push("/funding-score")}
+          activeOpacity={0.85}
+        >
+          <LinearGradient
+            colors={["#1A2A3C", "#0D1520"]}
+            style={StyleSheet.absoluteFill}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          />
+          <View style={styles.fundingScoreInner}>
+            <View style={styles.fundingScoreIcon}>
+              <Feather name="target" size={20} color={Colors.gold} />
+            </View>
+            <View style={styles.upgradeText}>
+              <Text style={styles.fundingScoreTitle}>Funding Score Calculator</Text>
+              <Text style={styles.upgradeDesc}>Estimate your business funding approval odds</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={Colors.gold} />
+          </View>
+        </TouchableOpacity>
+
         {/* Bootcamp Mode */}
         <View style={styles.sectionHeader}>
           <View style={styles.sectionTag}>
@@ -268,8 +293,15 @@ export default function MissionsScreen() {
           />
         ))}
 
+        {/* BCU Banner Separator */}
+        <View style={styles.bcuBannerContainer}>
+          <View style={styles.bcuBannerLine} />
+          <Image source={bcuBannerImage} style={styles.bcuBannerImage} resizeMode="contain" />
+          <View style={styles.bcuBannerLine} />
+        </View>
+
         {/* Business Credit University */}
-        <View style={[styles.sectionHeader, styles.sectionHeaderPremium, { marginTop: 32 }]}>
+        <View style={[styles.sectionHeader]}>
           <View style={[styles.sectionTag, { backgroundColor: hasUniversity ? "#0D3D30" : "#1A3A5C" }]}>
             <Text style={styles.sectionTagText}>{hasUniversity ? "UNLOCKED" : "LOCKED"}</Text>
           </View>
@@ -313,21 +345,26 @@ export default function MissionsScreen() {
         )}
 
         {!hasUniversity && (
-          <View style={styles.bcuLockedCard}>
+          <TouchableOpacity
+            style={styles.bcuLockedCard}
+            onPress={() => router.push("/upgrade-university")}
+            activeOpacity={0.85}
+          >
             <LinearGradient
-              colors={["#1A2A3C", "#0D1520"]}
+              colors={["#0D2A2A", "#0D1520"]}
               style={StyleSheet.absoluteFill}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
             />
             <View style={styles.bcuLockedInner}>
-              <Ionicons name="lock-closed" size={28} color={Colors.textMuted} />
+              <Ionicons name="lock-open" size={24} color={Colors.teal} />
               <View style={styles.upgradeText}>
-                <Text style={styles.bcuLockedTitle}>Coming Soon</Text>
-                <Text style={styles.upgradeDesc}>Payment integration pending</Text>
+                <Text style={[styles.bcuLockedTitle, { color: Colors.teal }]}>Unlock University</Text>
+                <Text style={styles.upgradeDesc}>12 modules · $85.00/mo auto-pay</Text>
               </View>
+              <Ionicons name="chevron-forward" size={20} color={Colors.teal} />
             </View>
-          </View>
+          </TouchableOpacity>
         )}
 
         {BCU_LESSONS.map((lesson) => (
@@ -340,6 +377,54 @@ export default function MissionsScreen() {
             lockType="university"
           />
         ))}
+
+        <View style={styles.insightCard}>
+          <LinearGradient
+            colors={["#1A2A3C", "#0D1520"]}
+            style={StyleSheet.absoluteFill}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          />
+          <View style={styles.insightHeader}>
+            <Feather name="map" size={16} color={Colors.teal} />
+            <Text style={styles.insightTitle}>BCU ROADMAP SUMMARY</Text>
+          </View>
+          <Text style={styles.insightBody}>
+            Your business is in the Vendor Builder stage. You've built a solid foundation, but your profile still needs more reporting depth before higher-tier credit becomes realistic. Focus on adding reporting accounts, paying early, and strengthening bureau coverage.
+          </Text>
+        </View>
+
+        <View style={styles.insightCard}>
+          <LinearGradient
+            colors={["#1A2A3C", "#0D1520"]}
+            style={StyleSheet.absoluteFill}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          />
+          <View style={styles.insightHeader}>
+            <Feather name="bar-chart-2" size={16} color={Colors.gold} />
+            <Text style={[styles.insightTitle, { color: Colors.gold }]}>APPROVAL CALCULATOR SUMMARY</Text>
+          </View>
+          <Text style={styles.insightBody}>
+            Your current file appears moderately fundable. You are strongest for vendor, retail, and starter fleet products. Cash credit is possible, but your odds improve significantly with more tradelines, stronger revenue history, and lower utilization.
+          </Text>
+        </View>
+
+        <View style={[styles.insightCard, styles.blockerCard]}>
+          <LinearGradient
+            colors={["#2A1A1A", "#1A0D0D"]}
+            style={StyleSheet.absoluteFill}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          />
+          <View style={styles.insightHeader}>
+            <Feather name="alert-triangle" size={16} color="#EF4444" />
+            <Text style={[styles.insightTitle, { color: "#EF4444" }]}>BLOCKER WARNING</Text>
+          </View>
+          <Text style={styles.insightBody}>
+            Your biggest blocker right now is not business age — it's limited reporting depth. More accounts need to report before lenders will see a stable file.
+          </Text>
+        </View>
       </ScrollView>
     </View>
   );
@@ -644,7 +729,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.teal + "44",
   },
   bcuLockedInner: {
     flexDirection: "row",
@@ -657,5 +742,78 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.textMuted,
     marginBottom: 3,
+  },
+  fundingScoreCard: {
+    borderRadius: 14,
+    overflow: "hidden",
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.gold + "33",
+  },
+  fundingScoreInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    gap: 12,
+  },
+  fundingScoreIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.goldDim + "33",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fundingScoreTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 15,
+    color: Colors.gold,
+    marginBottom: 2,
+  },
+  bcuBannerContainer: {
+    alignItems: "center",
+    marginTop: 32,
+    marginBottom: 24,
+    flexDirection: "row",
+    gap: 12,
+  },
+  bcuBannerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.teal + "44",
+  },
+  bcuBannerImage: {
+    width: 220,
+    height: 110,
+    borderRadius: 12,
+  },
+  insightCard: {
+    borderRadius: 14,
+    overflow: "hidden",
+    padding: 16,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: Colors.teal + "33",
+  },
+  blockerCard: {
+    borderColor: "#EF4444" + "33",
+  },
+  insightHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+  },
+  insightTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 11,
+    color: Colors.teal,
+    letterSpacing: 2,
+  },
+  insightBody: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.textSecondary,
+    lineHeight: 20,
   },
 });
